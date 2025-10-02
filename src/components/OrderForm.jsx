@@ -177,7 +177,6 @@ export default function OrderForm({ products = null, phone = '5515991782865' }) 
     lines.push('Endereço: ' + endereco);
     if (cep) lines.push('CEP: ' + cep);
     lines.push('Método de pagamento: ' + (pagamento || '[não informado]'));
-    lines.push('\nPor favor confirme disponibilidade e prazo de entrega. Obrigado!');
 
     return lines.join('\n');
   }
@@ -206,8 +205,6 @@ export default function OrderForm({ products = null, phone = '5515991782865' }) 
   return (
     <div className="max-w-4xl mx-auto p-6 bg-white rounded-2xl shadow-md">
       <h2 className="text-2xl font-semibold mb-2">Formulário de Pedido</h2>
-      <p className="text-sm text-gray-500 mb-6">Preencha os dados e clique em <strong>Enviar para WhatsApp</strong>.</p>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div className="md:col-span-2">
           <label className="block text-sm font-medium text-gray-700">Nome</label>
@@ -254,7 +251,6 @@ export default function OrderForm({ products = null, phone = '5515991782865' }) 
                   <option value="">-- selecione --</option>
                   {productNames.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
-                <div className="text-xs text-gray-500 mt-1">Preço mínimo: {formatCurrency(r.precoMin || PRECO_MIN_FALLBACK)} (média + 15% no banco)</div>
               </div>
 
               <input type="number" min={1} value={r.quantidade} onChange={e=>onQuantidadeChange(r.id, Number(e.target.value || 1))} className="w-28 rounded-md border-gray-200 p-2" />
@@ -283,7 +279,6 @@ export default function OrderForm({ products = null, phone = '5515991782865' }) 
       <div className="flex items-center justify-between border-t pt-4 mt-4">
         <div>
           <div className="text-sm text-gray-600">Total (itens com preço informado): <strong>{formatCurrency(calcularTotal())}</strong></div>
-          <div className="text-xs text-gray-500 mt-1">Se existir item com preço abaixo do mínimo, o envio será bloqueado.</div>
         </div>
 
         <div className="flex gap-2">

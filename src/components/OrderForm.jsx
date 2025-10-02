@@ -251,6 +251,7 @@ export default function OrderForm({ products = null, phone = '5515991782865' }) 
                   <option value="">-- selecione --</option>
                   {productNames.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
+                <div className="text-xs text-gray-500 mt-1">Preço mínimo: {formatCurrency(r.precoMin || PRECO_MIN_FALLBACK)}</div>
               </div>
 
               <input type="number" min={1} value={r.quantidade} onChange={e=>onQuantidadeChange(r.id, Number(e.target.value || 1))} className="w-28 rounded-md border-gray-200 p-2" />

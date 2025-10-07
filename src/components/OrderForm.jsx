@@ -16,7 +16,7 @@ export default function OrderForm({ phone = '5515991782865' }) {
 
   const [produtosGlobais, setProdutosGlobais] = useState([]);
   const [rows, setRows] = useState([]);
-  const [suggestions, setSuggestions] = useState({});
+  // suggestions removido pois não é utilizado diretamente
   const searchTimeouts = useRef({});
 
   // util: parse seguro de strings/nums (brasileiro e internacional)
@@ -73,7 +73,7 @@ function findFieldRecursive(obj, names = [], seen = new Set(), path = []) {
           return { key: k, value: val, path: [...path, k] };
         }
       }
-    } catch (e) {
+    } catch {
       // ignore property access errors
     }
   }
@@ -86,7 +86,7 @@ function findFieldRecursive(obj, names = [], seen = new Set(), path = []) {
         const nested = findFieldRecursive(val, names, seen, [...path, k]);
         if (nested) return nested;
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
   }
@@ -112,7 +112,7 @@ function findPriceInObject(obj, seen = new Set()) {
   seen.add(obj);
 
   // 1) procura recursiva por campos exatos do BD (qualquer profundidade)
-  const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
+  const tabelaFields = ['Preco_ens', 'Preco_med_out'];
   const tabelaFound = findFieldRecursive(obj, tabelaFields, seen);
   if (tabelaFound) {
     const parsedTabela = parseToNumber(tabelaFound.value);
@@ -121,8 +121,7 @@ function findPriceInObject(obj, seen = new Set()) {
 
   // 2) prioridade por chaves comuns no nível atual
   const priorityKeys = [
-    'Preco_med_prod','Preco_ens','Preco_med_out','Preco_med','Preco','preco','preco_med','preco_ens',
-    'valor','Valor','valor_unitario','price','Price','valor_unitario'
+    'Preco_ens','Preco_med_out'
   ];
   for (const k of priorityKeys) {
     const lk = Object.keys(obj).find(x => x === k || x.toLowerCase() === k.toLowerCase());
@@ -159,7 +158,7 @@ function findPriceInObject(obj, seen = new Set()) {
         const parsed = parseToNumber(val);
         if (parsed && parsed > 0) return parsed;
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
   }
@@ -185,10 +184,11 @@ function calcPrecoMinFromBase(base) {
         const [resCereais, resOutros] = await Promise.all([
           api.get('/cereais'),
           api.get('/produtos')
-        ].map(p => p.catch(e => ({ data: [] }))));
+  ].map(p => p.catch(() => ({ data: [] }))));
 
         const listC = (resCereais && resCereais.data) ? resCereais.data : [];
         const listO = (resOutros && resOutros.data) ? resOutros.data : [];
+
 
         const normalize = it => {
           // forçar id string
@@ -196,21 +196,55 @@ function calcPrecoMinFromBase(base) {
           const nomeVals = [it.nome, it.Nome, it.Descricao, it.Nome_produto, it.Nome_ens, it.Nome_out, it.Produto].filter(Boolean);
           const nome = nomeVals.length ? String(nomeVals[0]) : '';
 
-          // PRIORIDADE EXATA: procura recursiva pelos campos do BD (qualquer profundidade)
-          const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
-          const tabelaFound = findFieldRecursive(it, tabelaFields);
-          let precoBaseFound = tabelaFound ? parseToNumber(tabelaFound.value) : null;
-          let precoBaseSource = tabelaFound ? tabelaFound.key : null;
-          let precoBasePath = tabelaFound ? tabelaFound.path.join('.') : null;
+          // Busca preço base APENAS dos campos específicos, aceitando variações de maiúsculas/minúsculas e campos aninhados
+          let precoBaseFound = null;
+          let precoBaseSource = null;
+          let precoBasePath = null;
 
-          // se não encontrou nesses campos, tenta varredura recursiva geral
-          if (!precoBaseFound || precoBaseFound <= 0) {
-            const nested = findPriceInObject(it);
-            if (nested) {
-              precoBaseFound = nested;
-              precoBaseSource = '(found by generic search)';
-              precoBasePath = null;
+          // Função utilitária para buscar campo ignorando case
+          function getField(obj, keys) {
+            for (const k of Object.keys(obj)) {
+              for (const target of keys) {
+                if (k.toLowerCase() === target.toLowerCase()) {
+                  return { value: obj[k], key: k };
+                }
+              }
             }
+            return null;
+          }
+
+          // Tenta encontrar no nível principal
+          let found = getField(it, ['Preco_ens']);
+          if (found && found.value != null) {
+            precoBaseFound = parseToNumber(found.value);
+            precoBaseSource = found.key;
+            precoBasePath = found.key;
+          } else {
+            found = getField(it, ['Preco_med_out']);
+            if (found && found.value != null) {
+              precoBaseFound = parseToNumber(found.value);
+              precoBaseSource = found.key;
+              precoBasePath = found.key;
+            } else {
+              // Busca recursiva apenas nesses campos
+              const foundEns = findFieldRecursive(it, ['Preco_ens']);
+              if (foundEns && foundEns.value != null) {
+                precoBaseFound = parseToNumber(foundEns.value);
+                precoBaseSource = foundEns.key;
+                precoBasePath = foundEns.path.join('.');
+              } else {
+                const foundOut = findFieldRecursive(it, ['Preco_med_out']);
+                if (foundOut && foundOut.value != null) {
+                  precoBaseFound = parseToNumber(foundOut.value);
+                  precoBaseSource = foundOut.key;
+                  precoBasePath = foundOut.path.join('.');
+                }
+              }
+            }
+          }
+
+          if (!precoBaseFound || precoBaseFound <= 0) {
+            console.warn('[normalize] Não foi possível encontrar preço base válido para o item:', rawId, nome);
           }
 
           const precoMin = (precoBaseFound && precoBaseFound > 0) ? calcPrecoMinFromBase(precoBaseFound) : PRECO_MIN_FALLBACK;
@@ -233,7 +267,7 @@ function calcPrecoMinFromBase(base) {
 
         const merged = [...listC.map(normalize), ...listO.map(normalize)];
         setProdutosGlobais(merged);
-        try { window._produtosGlobais = merged; } catch (e) {}
+  try { window._produtosGlobais = merged; } catch { /* ignore */ }
         console.log('produtosGlobais carregados:', merged.length);
       } catch (err) {
         console.warn('Falha ao buscar produtos globais', err);
@@ -242,7 +276,7 @@ function calcPrecoMinFromBase(base) {
     })();
 
     return () => {
-      Object.values(searchTimeouts.current).forEach(t => clearTimeout(t));
+  Object.values(searchTimeouts.current).forEach(t => clearTimeout(t));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -262,7 +296,7 @@ function calcPrecoMinFromBase(base) {
 
   function removeRow(id) {
     setRows(prev => prev.filter(r => r.id !== id));
-    setSuggestions(prev => { const copy = { ...prev }; delete copy[id]; return copy; });
+  // suggestions removido
   }
 
   function moveRowUp(index) {
@@ -303,59 +337,7 @@ function calcPrecoMinFromBase(base) {
     return num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   }
 
-  function searchProdutos(rowId, q) {
-    if (searchTimeouts.current[rowId]) clearTimeout(searchTimeouts.current[rowId]);
-    if (!q || q.length < 2) {
-      setSuggestions(prev => ({ ...prev, [rowId]: [] }));
-      return;
-    }
 
-    searchTimeouts.current[rowId] = setTimeout(async () => {
-      try {
-        const res = await api.get(`/cereais?search=${encodeURIComponent(q)}`);
-        const list = res.data || [];
-        const normalized = list.map(it => {
-          const match = produtosGlobais.find(p => {
-            try {
-              const a = String(p.raw && (p.raw.id || p.raw._id || p.raw.Codigo || p.raw.codigo) || '');
-              const b = String(it.id || it._id || it.Codigo || it.codigo || '');
-              return a === b && a !== '';
-            } catch (e) { return false; }
-          });
-          if (match) return match;
-
-          // extrai preço base dando prioridade às 3 tabelas do BD (recursivamente)
-          const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
-          const tabelaFound = findFieldRecursive(it, tabelaFields);
-          let precoBaseFound = tabelaFound ? parseToNumber(tabelaFound.value) : null;
-          let precoBaseSource = tabelaFound ? tabelaFound.key : null;
-          if (!precoBaseFound || precoBaseFound <= 0) {
-            const nested = findPriceInObject(it);
-            if (nested) {
-              precoBaseFound = nested;
-              precoBaseSource = '(generic)';
-            }
-          }
-
-          const precoMin = (precoBaseFound && precoBaseFound > 0) ? calcPrecoMinFromBase(precoBaseFound) : PRECO_MIN_FALLBACK;
-          return {
-            id: String(it.id || it._id || it.codigo || it.Codigo || ''),
-            nome: it.nome || it.Nome || it.Descricao || it.Nome_produto || it.Nome_ens || it.Nome_out || '',
-            peso: it.peso || it.Peso || null,
-            codigo: it.codigo || it.Codigo || null,
-            precoBase: precoBaseFound,
-            precoBaseSource,
-            precoMin,
-            raw: it
-          };
-        });
-        setSuggestions(prev => ({ ...prev, [rowId]: normalized }));
-      } catch (err) {
-        console.warn('Erro na busca de produtos', err);
-        setSuggestions(prev => ({ ...prev, [rowId]: [] }));
-      }
-    }, 300);
-  }
 
   // Seleção do produto: detecta precoMin localmente; se não, consulta backend /precomin
   async function onSelectSuggestion(rowId, produto) {
@@ -396,7 +378,7 @@ function calcPrecoMinFromBase(base) {
           const n = parseToNumber(backendVal);
           if (n && n > 0) precoMinCalc = Math.round(n * 100) / 100;
         }
-      } catch (err) {
+      } catch {
         // ignora e tenta por nome
       }
     }
@@ -409,7 +391,7 @@ function calcPrecoMinFromBase(base) {
           const n2 = parseToNumber(backendVal2);
           if (n2 && n2 > 0) precoMinCalc = Math.round(n2 * 100) / 100;
         }
-      } catch (err) {
+      } catch {
         // ignora
       }
     }
@@ -429,7 +411,7 @@ function calcPrecoMinFromBase(base) {
       precoMin: precoMinCalc
     } : r));
 
-    setSuggestions(prev => ({ ...prev, [rowId]: [] }));
+  // suggestions removido
   }
 
   function montarMensagem() {
@@ -538,7 +520,7 @@ function calcPrecoMinFromBase(base) {
                 setRua(data.logradouro || '');
                 setBairro(data.bairro || '');
                 setCidade(data.localidade || '');
-              } catch (err) { console.error(err); alert('Não foi possível buscar o CEP.'); }
+      } catch { alert('Não foi possível buscar o CEP.'); }
             }} className="px-3 rounded-md bg-white border-gray-200 shadow-sm">Buscar</button>
           </div>
         </div>
@@ -590,7 +572,7 @@ function calcPrecoMinFromBase(base) {
                     prod = produtosGlobais.find(p => {
                       try {
                         return String(p.codigo) === id || String(p.codigo) === selectedText;
-                      } catch(e){ return false; }
+                      } catch { return false; }
                     });
                   }
 

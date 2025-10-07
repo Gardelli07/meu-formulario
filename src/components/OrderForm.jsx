@@ -36,46 +36,121 @@ export default function OrderForm({ phone = '5515991782865' }) {
     return isNaN(n) ? null : n;
   }
 
-  // Busca recursiva por campo de preço / valor dentro de obj/arrays
-  function findPriceInObject(obj, seen = new Set()) {
-    if (obj === null || obj === undefined) return null;
-    if (typeof obj === 'number') return obj > 0 ? obj : null;
-    if (typeof obj === 'string') {
-      const p = parseToNumber(obj);
-      return p && p > 0 ? p : null;
-    }
-    if (typeof obj !== 'object') return null;
-    if (seen.has(obj)) return null;
-    seen.add(obj);
+ /**
+ * Normaliza uma chave para comparação:
+ * - remove caracteres não alfanuméricos
+ * - toLowerCase
+ */
+function normalizeKey(k) {
+  if (!k && k !== 0) return '';
+  return String(k).replace(/[^a-z0-9]/gi, '').toLowerCase().trim();
+}
 
-    const priorityKeys = [
-      'Preco_med_prod','Preco_ens','Preco_med_out','Preco_med','Preco','preco','preco_med','preco_ens',
-      'valor','Valor','valor_unitario','price','Price','valor_unitario'
-    ];
+/**
+ * procura recursiva por um conjunto de nomes (names) em qualquer nível do objeto
+ * Retorna { key, value, path } ou null.
+ * Usa comparação tolerante: normaliza as chaves e aceita equality ou includes.
+ */
+function findFieldRecursive(obj, names = [], seen = new Set(), path = []) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (seen.has(obj)) return null;
+  seen.add(obj);
 
-    for (const k of priorityKeys) {
-      const lk = Object.keys(obj).find(x => x === k || x.toLowerCase() === k.toLowerCase());
-      if (lk && obj[lk] !== undefined && obj[lk] !== null && obj[lk] !== '') {
-        const parsed = parseToNumber(obj[lk]);
-        if (parsed && parsed > 0) return parsed;
+  const keys = Object.keys(obj);
+  // precompute normalized target names
+  const targetNorms = names.map(n => normalizeKey(n));
+
+  // 1) Verifica keys do nível atual com comparação tolerante
+  for (const k of keys) {
+    try {
+      const val = obj[k];
+      if (val === undefined || val === null || val === '') continue;
+      const kn = normalizeKey(k);
+      for (let i = 0; i < targetNorms.length; i++) {
+        const tn = targetNorms[i];
+        // igualdade exata ou contains (para casos como "preco_med_out " / "preco-med-out" etc)
+        if (kn === tn || kn.includes(tn) || tn.includes(kn)) {
+          return { key: k, value: val, path: [...path, k] };
+        }
       }
+    } catch (e) {
+      // ignore property access errors
     }
+  }
 
-    for (const k of Object.keys(obj)) {
-      if (/preco|valor|price/i.test(k)) {
-        const parsed = parseToNumber(obj[k]);
-        if (parsed && parsed > 0) return parsed;
+  // 2) percorre aninhados (inclui arrays)
+  for (const k of keys) {
+    try {
+      const val = obj[k];
+      if (val && typeof val === 'object') {
+        const nested = findFieldRecursive(val, names, seen, [...path, k]);
+        if (nested) return nested;
       }
+    } catch (e) {
+      // ignore
     }
+  }
 
-    if (Array.isArray(obj)) {
-      for (const el of obj) {
-        const nested = findPriceInObject(el, seen);
-        if (nested && nested > 0) return nested;
-      }
+  return null;
+}
+
+/**
+ * Busca recursiva por preço dentro do objeto.
+ * Prioriza, em qualquer profundidade, os campos que você informou:
+ * Preco_med_prod -> Preco_ens -> Preco_med_out
+ * Depois faz busca por chaves "preco/valor/price", depois varredura genérica.
+ */
+function findPriceInObject(obj, seen = new Set()) {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj === 'number') return obj > 0 ? obj : null;
+  if (typeof obj === 'string') {
+    const p = parseToNumber(obj);
+    return p && p > 0 ? p : null;
+  }
+  if (typeof obj !== 'object') return null;
+  if (seen.has(obj)) return null;
+  seen.add(obj);
+
+  // 1) procura recursiva por campos exatos do BD (qualquer profundidade)
+  const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
+  const tabelaFound = findFieldRecursive(obj, tabelaFields, seen);
+  if (tabelaFound) {
+    const parsedTabela = parseToNumber(tabelaFound.value);
+    if (parsedTabela && parsedTabela > 0) return parsedTabela;
+  }
+
+  // 2) prioridade por chaves comuns no nível atual
+  const priorityKeys = [
+    'Preco_med_prod','Preco_ens','Preco_med_out','Preco_med','Preco','preco','preco_med','preco_ens',
+    'valor','Valor','valor_unitario','price','Price','valor_unitario'
+  ];
+  for (const k of priorityKeys) {
+    const lk = Object.keys(obj).find(x => x === k || x.toLowerCase() === k.toLowerCase());
+    if (lk && obj[lk] !== undefined && obj[lk] !== null && obj[lk] !== '') {
+      const parsed = parseToNumber(obj[lk]);
+      if (parsed && parsed > 0) return parsed;
     }
+  }
 
-    for (const k of Object.keys(obj)) {
+  // 3) procura por qualquer chave que contenha 'preco'/'valor'/'price' no nível atual
+  for (const k of Object.keys(obj)) {
+    if (/preco|valor|price/i.test(k)) {
+      const parsed = parseToNumber(obj[k]);
+      if (parsed && parsed > 0) return parsed;
+    }
+  }
+
+  // 4) se for array, itera recursivamente
+  if (Array.isArray(obj)) {
+    for (const el of obj) {
+      const nested = findPriceInObject(el, seen);
+      if (nested && nested > 0) return nested;
+    }
+  }
+
+  // 5) varredura recursiva dos valores do objeto (último recurso)
+  for (const k of Object.keys(obj)) {
+    try {
       const val = obj[k];
       if (val && typeof val === 'object') {
         const nested = findPriceInObject(val, seen);
@@ -84,16 +159,23 @@ export default function OrderForm({ phone = '5515991782865' }) {
         const parsed = parseToNumber(val);
         if (parsed && parsed > 0) return parsed;
       }
+    } catch (e) {
+      // ignore
     }
-
-    return null;
   }
 
-  function calcPrecoMinFromBase(base) {
-    const b = parseToNumber(base);
-    if (!b || b <= 0) return PRECO_MIN_FALLBACK;
-    return Math.round(b * 1.15 * 100) / 100;
-  }
+  return null;
+}
+
+/**
+ * Calcula preco minimo: base * 1.15 e arredonda para 2 casas.
+ */
+function calcPrecoMinFromBase(base) {
+  const b = parseToNumber(base);
+  if (!b || b <= 0) return PRECO_MIN_FALLBACK;
+  // multiplica por 1.15 (15%) e arredonda
+  return Math.round(b * 1.15 * 100) / 100;
+}
 
   useEffect(() => {
     if (rows.length === 0) addRow();
@@ -109,12 +191,32 @@ export default function OrderForm({ phone = '5515991782865' }) {
         const listO = (resOutros && resOutros.data) ? resOutros.data : [];
 
         const normalize = it => {
+          // forçar id string
           const rawId = it.id || it._id || it.codigo || it.Codigo || it.Id_ens || it.Codigo_produto || it.Codigo_out || it.Id_prod || it.Id_out || '';
           const nomeVals = [it.nome, it.Nome, it.Descricao, it.Nome_produto, it.Nome_ens, it.Nome_out, it.Produto].filter(Boolean);
           const nome = nomeVals.length ? String(nomeVals[0]) : '';
 
-          const precoBaseFound = findPriceInObject(it);
+          // PRIORIDADE EXATA: procura recursiva pelos campos do BD (qualquer profundidade)
+          const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
+          const tabelaFound = findFieldRecursive(it, tabelaFields);
+          let precoBaseFound = tabelaFound ? parseToNumber(tabelaFound.value) : null;
+          let precoBaseSource = tabelaFound ? tabelaFound.key : null;
+          let precoBasePath = tabelaFound ? tabelaFound.path.join('.') : null;
+
+          // se não encontrou nesses campos, tenta varredura recursiva geral
+          if (!precoBaseFound || precoBaseFound <= 0) {
+            const nested = findPriceInObject(it);
+            if (nested) {
+              precoBaseFound = nested;
+              precoBaseSource = '(found by generic search)';
+              precoBasePath = null;
+            }
+          }
+
           const precoMin = (precoBaseFound && precoBaseFound > 0) ? calcPrecoMinFromBase(precoBaseFound) : PRECO_MIN_FALLBACK;
+
+          // log individual para debug no carregamento (remova em produção)
+          console.log('[normalize] id=', String(rawId), 'nome=', nome, 'precoBaseFound=', precoBaseFound, 'source=', precoBaseSource, 'path=', precoBasePath, 'precoMin=', precoMin);
 
           return {
             id: String(rawId || ''),
@@ -123,14 +225,16 @@ export default function OrderForm({ phone = '5515991782865' }) {
             codigo: it.codigo || it.Codigo || it.Codigo_ens || it.Codigo_out || null,
             precoBase: precoBaseFound,
             precoMin,
-            raw: it
+            raw: it,
+            precoBaseSource,
+            precoBasePath
           };
         };
 
         const merged = [...listC.map(normalize), ...listO.map(normalize)];
         setProdutosGlobais(merged);
         try { window._produtosGlobais = merged; } catch (e) {}
-        console.debug('produtosGlobais carregados:', merged.length);
+        console.log('produtosGlobais carregados:', merged.length);
       } catch (err) {
         console.warn('Falha ao buscar produtos globais', err);
         setProdutosGlobais([]);
@@ -152,7 +256,7 @@ export default function OrderForm({ phone = '5515991782865' }) {
       codigo: selectedProduct ? selectedProduct.codigo : null,
       quantidade: qty,
       precoUnit: '',
-      precoMin: selectedProduct ? (selectedProduct.precoMin ?? PRECO_MIN_FALLBACK) : PRECO_MIN_FALLBACK
+      precoMin: selectedProduct ? (selectedProduct.precoMin ?? selectedProduct.precoMin ?? PRECO_MIN_FALLBACK) : PRECO_MIN_FALLBACK
     }]);
   }
 
@@ -219,7 +323,20 @@ export default function OrderForm({ phone = '5515991782865' }) {
             } catch (e) { return false; }
           });
           if (match) return match;
-          const precoBaseFound = findPriceInObject(it);
+
+          // extrai preço base dando prioridade às 3 tabelas do BD (recursivamente)
+          const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
+          const tabelaFound = findFieldRecursive(it, tabelaFields);
+          let precoBaseFound = tabelaFound ? parseToNumber(tabelaFound.value) : null;
+          let precoBaseSource = tabelaFound ? tabelaFound.key : null;
+          if (!precoBaseFound || precoBaseFound <= 0) {
+            const nested = findPriceInObject(it);
+            if (nested) {
+              precoBaseFound = nested;
+              precoBaseSource = '(generic)';
+            }
+          }
+
           const precoMin = (precoBaseFound && precoBaseFound > 0) ? calcPrecoMinFromBase(precoBaseFound) : PRECO_MIN_FALLBACK;
           return {
             id: String(it.id || it._id || it.codigo || it.Codigo || ''),
@@ -227,6 +344,7 @@ export default function OrderForm({ phone = '5515991782865' }) {
             peso: it.peso || it.Peso || null,
             codigo: it.codigo || it.Codigo || null,
             precoBase: precoBaseFound,
+            precoBaseSource,
             precoMin,
             raw: it
           };
@@ -244,36 +362,63 @@ export default function OrderForm({ phone = '5515991782865' }) {
     const produtoIdStr = String(produto.id || produto._id || produto.codigo || produto.Codigo || '');
     const nomeProduto = produto.nome || produto.Nome || produto.Descricao || produto.Nome_produto || produto.Nome_ens || produto.Nome_out || '';
 
-    let precoMinCalc = PRECO_MIN_FALLBACK;
+    // 1) tenta extrair precoMin diretamente (parse para aceitar strings)
+    let precoMinCalc = null;
+    const possiblePm = produto.precoMin ?? produto.Preco_min ?? produto.preco_min ?? produto.precoMinCalc ?? null;
+    const parsedPm = parseToNumber(possiblePm);
+    if (parsedPm && parsedPm > 0) precoMinCalc = Math.round(parsedPm * 100) / 100;
 
-    if (produto.precoMin !== undefined && produto.precoMin !== null && Number(produto.precoMin) > 0) {
-      precoMinCalc = Number(produto.precoMin);
-    } else if (produto.precoBase && Number(produto.precoBase) > 0) {
-      precoMinCalc = calcPrecoMinFromBase(produto.precoBase);
-    } else {
-      if (produto.raw) {
+    // 2) se não, tenta precoBase já normalizado
+    if ((!precoMinCalc || precoMinCalc <= 0) && produto.precoBase) {
+      const parsedBase = parseToNumber(produto.precoBase);
+      if (parsedBase && parsedBase > 0) precoMinCalc = calcPrecoMinFromBase(parsedBase);
+    }
+
+    // 3) se ainda não, procura recursivamente no raw (com prioridade para os 3 campos do BD)
+    if ((!precoMinCalc || precoMinCalc <= 0) && produto.raw) {
+      const tabelaFields = ['Preco_med_prod', 'Preco_ens', 'Preco_med_out'];
+      const tabelaFound = findFieldRecursive(produto.raw, tabelaFields);
+      const parsedTabela = tabelaFound ? parseToNumber(tabelaFound.value) : null;
+      if (parsedTabela && parsedTabela > 0) {
+        precoMinCalc = calcPrecoMinFromBase(parsedTabela);
+      } else {
         const rawFound = findPriceInObject(produto.raw);
         if (rawFound && rawFound > 0) precoMinCalc = calcPrecoMinFromBase(rawFound);
       }
     }
 
+    // 4) fallback: consulta backend por produtoId e por nome (mais tolerante)
     if ((!precoMinCalc || precoMinCalc === PRECO_MIN_FALLBACK) && produtoIdStr) {
       try {
         const res = await api.get(`/precomin?produtoId=${encodeURIComponent(produtoIdStr)}`);
         if (res && res.data) {
-          const backendVal = res.data.precoMin ?? res.data.Preco_min ?? res.data.precomin ?? null;
+          const backendVal = res.data.precoMin ?? res.data.Preco_min ?? res.data.precomin ?? res.data.PrecoMin ?? null;
           const n = parseToNumber(backendVal);
-          if (n && n > 0) {
-            precoMinCalc = Math.round(Number(n) * 100) / 100;
-            console.debug('precoMin obtido do backend /precomin:', precoMinCalc, 'produtoId:', produtoIdStr);
-          }
+          if (n && n > 0) precoMinCalc = Math.round(n * 100) / 100;
         }
       } catch (err) {
-        console.warn('Erro ao consultar /precomin', err);
+        // ignora e tenta por nome
       }
     }
 
-    console.debug('onSelectSuggestion -> produtoId:', produtoIdStr, 'nome:', nomeProduto, 'precoBase(normalized):', produto.precoBase, 'precoMinCalc:', precoMinCalc, 'rawKeys:', produto.raw ? Object.keys(produto.raw).slice(0,20) : null);
+    if ((!precoMinCalc || precoMinCalc === PRECO_MIN_FALLBACK) && nomeProduto) {
+      try {
+        const res2 = await api.get(`/precomin?produto=${encodeURIComponent(nomeProduto)}`);
+        if (res2 && res2.data) {
+          const backendVal2 = res2.data.precoMin ?? res2.data.Preco_min ?? res2.data.precomin ?? null;
+          const n2 = parseToNumber(backendVal2);
+          if (n2 && n2 > 0) precoMinCalc = Math.round(n2 * 100) / 100;
+        }
+      } catch (err) {
+        // ignora
+      }
+    }
+
+    // garante fallback numérico
+    if (!precoMinCalc || precoMinCalc <= 0) precoMinCalc = PRECO_MIN_FALLBACK;
+
+    // debug (remova se quiser)
+    console.log('onSelectSuggestion -> produtoId:', produtoIdStr, 'nome:', nomeProduto, 'precoMinCalc:', precoMinCalc, 'produto.precoBase:', produto.precoBase, 'produto.precoBaseSource:', produto.precoBaseSource);
 
     setRows(prev => prev.map(r => r.id === rowId ? {
       ...r,
@@ -426,15 +571,39 @@ export default function OrderForm({ phone = '5515991782865' }) {
               <div className="flex-1 relative">
                 <select value={r.produtoId || ''} onChange={e => {
                   const id = e.target.value;
+                  const selectedText = e.target.options[e.target.selectedIndex]?.text || '';
                   if (!id) {
                     setRows(prev => prev.map(row => row.id === r.id ? { ...row, produtoId: null, produtoNome: '', precoMin: PRECO_MIN_FALLBACK } : row));
                     return;
                   }
-                  const prod = produtosGlobais.find(p => String(p.id) === id);
+
+                  // 1) tenta achar por id
+                  let prod = produtosGlobais.find(p => String(p.id) === id);
+
+                  // 2) se não achou por id, tenta achar pelo nome igual ao texto do option
+                  if (!prod && selectedText) {
+                    prod = produtosGlobais.find(p => String(p.nome).trim() === String(selectedText).trim());
+                  }
+
+                  // 3) se ainda não achou, tenta por código
+                  if (!prod) {
+                    prod = produtosGlobais.find(p => {
+                      try {
+                        return String(p.codigo) === id || String(p.codigo) === selectedText;
+                      } catch(e){ return false; }
+                    });
+                  }
+
+                  // 4) por fim tenta por aproximação (contains) no nome
+                  if (!prod && selectedText) {
+                    prod = produtosGlobais.find(p => String(p.nome).toLowerCase().includes(String(selectedText).toLowerCase()));
+                  }
+
                   if (prod) {
                     onSelectSuggestion(r.id, prod);
                   } else {
-                    setRows(prev => prev.map(row => row.id === r.id ? { ...row, produtoId: String(id) } : row));
+                    // grava id mesmo sem objeto (mantendo igualdade com option value)
+                    setRows(prev => prev.map(row => row.id === r.id ? { ...row, produtoId: String(id), produtoNome: selectedText } : row));
                   }
                 }} className="w-full rounded-md border-gray-200 p-2">
                   <option value="">-- selecione --</option>
@@ -487,5 +656,5 @@ export default function OrderForm({ phone = '5515991782865' }) {
         <pre className="whitespace-pre-wrap bg-gray-50 p-4 rounded-md text-sm border">{montarMensagem()}</pre>
       </div>
     </div>
-  );
+  );  
 }

@@ -66,7 +66,7 @@ export default function OrderForm({ phone = '5515991782865' }) {
           const parsed = parseToNumber(v);
           if (parsed && parsed > 0) return parsed;
         }
-      } catch {}
+      } catch (e) { void e; }
     }
     return null;
   }
@@ -79,7 +79,7 @@ export default function OrderForm({ phone = '5515991782865' }) {
       try {
         const [resCereais, resOutros] = await Promise.all([
           api.get('/cereais').catch(() => ({ data: [] })),
-          api.get('/Produtos').catch(() => ({ data: [] }))
+          api.get('/produtos').catch(() => ({ data: [] }))
         ]);
 
         const listC = Array.isArray(resCereais.data) ? resCereais.data : [];
@@ -164,6 +164,8 @@ export default function OrderForm({ phone = '5515991782865' }) {
     return num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   }
 
+  const noProducts = produtosGlobais.length === 0; // <--- nova checagem
+
   /* ---------- seleção simples: usa id composto para encontrar o produto e aplicar precoMin ---------- */
   function onSelectSuggestion(rowId, produtoId) {
     const prod = produtosGlobais.find(p => p.id === produtoId);
@@ -203,7 +205,14 @@ export default function OrderForm({ phone = '5515991782865' }) {
   }
 
   async function enviarWhatsApp() {
-    if (priceBelowMinExists()) return alert('Existe item com preço abaixo do mínimo. Corrija.');
+    if (noProducts) {
+      alert('Não é possível enviar: nenhum produto cadastrado.');
+      return;
+    }
+    if (priceBelowMinExists()) {
+      alert('Existe item com preço abaixo do mínimo. Corrija.');
+      return;
+    }
     const mensagem = montarMensagem();
     try { await api.post('/pedido', { cliente: nome, endereco: { rua, numero, complemento, bairro, cidade, cep }, pagamento, itens: rows.filter(r => r.produtoNome).map(r => ({ produtoId: r.produtoId, produtoNome: r.produtoNome, quantidade: Number(r.quantidade||1), precoUnitario: r.precoUnit ? Number(r.precoUnit) : null })) }); }
     catch (err) { console.warn('Falha ao salvar pedido', err); }
@@ -263,7 +272,7 @@ export default function OrderForm({ phone = '5515991782865' }) {
       <div className="mb-4">
         <label>Itens</label>
         <div className="space-y-3 mt-2">
-          {rows.map((r, idx) => (
+          {rows.map((r) => (
             <div key={r.id} className="flex flex-col md:flex-row items-start md:items-center gap-2">
               <div className="flex-1">
                 <select value={r.produtoId || ''} onChange={e => onSelectSuggestion(r.id, e.target.value)} className="w-full rounded-md p-2">
@@ -291,13 +300,24 @@ export default function OrderForm({ phone = '5515991782865' }) {
         </div>
       </div>
 
+      {noProducts ? (
+        <div className="mb-4 text-sm text-red-600">Nenhum produto cadastrado — não é possível enviar pedidos.</div>
+      ) : null}
+
       <div className="flex items-center justify-between border-t pt-4 mt-4">
         <div>
           <div>Total: <strong>{formatCurrency(calcularTotal())}</strong></div>
         </div>
 
         <div className="flex gap-2">
-          <button type="button" onClick={enviarWhatsApp} disabled={priceBelowMinExists()} className={`px-4 py-2 rounded-md text-white ${priceBelowMinExists() ? 'bg-gray-400':'bg-indigo-600'}`}>Enviar para WhatsApp</button>
+          <button
+            type="button"
+            onClick={enviarWhatsApp}
+            disabled={priceBelowMinExists() || noProducts}
+            className={`px-4 py-2 rounded-md text-white ${priceBelowMinExists() || noProducts ? 'bg-gray-400 cursor-not-allowed':'bg-indigo-600'}`}
+          >
+            Enviar para WhatsApp
+          </button>
           <button type="button" onClick={()=>{}} className="px-4 py-2 rounded-md border">Atualizar preview</button>
         </div>
       </div>

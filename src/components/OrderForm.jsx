@@ -77,7 +77,7 @@ export default function OrderForm({ phone = "5515991782865" }) {
     (async function init() {
       try {
         const [resCereais, resOutros] = await Promise.all([
-          api.get("/cereais").catch(() => ({ data: [] })),
+          api.get("/ensacados").catch(() => ({ data: [] })),
           api.get("/produtos").catch(() => ({ data: [] })),
         ]);
 

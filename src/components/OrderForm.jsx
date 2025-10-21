@@ -3,6 +3,7 @@ import api from "../api";
 
 export default function OrderForm({ phone = "5515991782865" }) {
   const PRECO_MIN_FALLBACK = 15.0;
+  const ENTREGA_FIXED = "Fretado";
 
   const [nome, setNome] = useState("");
   const [contato, setContato] = useState("");
@@ -14,7 +15,6 @@ export default function OrderForm({ phone = "5515991782865" }) {
   const [cidade, setCidade] = useState("");
   const [complemento, setComplemento] = useState("");
   const [pagamento, setPagamento] = useState("Dinheiro");
-  const [entrega, setEntrega] = useState("Fretado");
 
   const [produtosGlobais, setProdutosGlobais] = useState([]);
   const [rows, setRows] = useState([]);
@@ -261,7 +261,7 @@ export default function OrderForm({ phone = "5515991782865" }) {
 
     lines.push("---");
     lines.push(`Endereço: ${parts.join(", ") || "[endereço não informado]"}`);
-    lines.push(`Entrega: ${entrega}`);
+    lines.push(`Entrega: ${ENTREGA_FIXED}`);
     lines.push(`Pagamento: ${pagamento}`);
 
     return lines.join("\n");
@@ -295,7 +295,7 @@ export default function OrderForm({ phone = "5515991782865" }) {
         contato: contato,
         endereco: { rua, numero, complemento, bairro, cidade, cep },
         pagamento,
-        entrega,
+        entrega: ENTREGA_FIXED,
         itens: rows
           .filter((r) => r.produtoNome)
           .map((r) => ({
@@ -427,19 +427,6 @@ export default function OrderForm({ phone = "5515991782865" }) {
             <option>Cheque</option>
             <option>Boleto</option>
             <option>Depósito bancário</option>
-          </select>
-        </div>
-
-        <div>
-          <label>Entrega</label>
-          <select
-            value={entrega}
-            onChange={(e) => setEntrega(e.target.value)}
-            className="mt-1 block w-full rounded-md p-2"
-          >
-            <option>Fretado</option>
-            <option>Entrega própria</option>
-            <option>Retirada</option>
           </select>
         </div>
       </div>
